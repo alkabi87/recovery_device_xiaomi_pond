@@ -13,6 +13,8 @@ jobs:
 
     - name: Clean Environment and Setup Swap Space
       run: |
+        sudo swapoff -a || true
+        sudo rm -f /swapfile
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
         sudo fallocate -l 12G /swapfile
         sudo chmod 600 /swapfile
