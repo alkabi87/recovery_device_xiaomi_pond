@@ -1,6 +1,9 @@
 name: Build TWRP 12.1 - POCO C75
 
 on:
+  push:
+    branches:
+      - twrp-12.1
   workflow_dispatch:
 
 jobs:
@@ -55,19 +58,32 @@ jobs:
           lunch twrp_pond-eng
           mka recoveryimage
 
-        - name: Find build outputs
+      - name: Find build outputs
         run: |
+          cd "$GITHUB_WORKSPACE/twrp"
           echo "=== POCO C75 build outputs ==="
-          find "$GITHUB_WORKSPACE/twrp/out/target/product/pond" \
-            -maxdepth 2 -type f -printf '%p\n' | sort
+          find out/target/product/pond \
+            -type f \( -name "*.img" -o -name "*.zip" \) \
+            -print
 
-            
+      - name: Prepare artifacts
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          rm -rf "$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          find out/target/product/pond \
+            -type f \( -name "*.img" -o -name "*.zip" \) \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+
+          echo "=== Files prepared for upload ==="
+          ls -lah "$GITHUB_WORKSPACE/artifacts"
+
+          test -n "$(find "$GITHUB_WORKSPACE/artifacts" -type f -print -quit)"
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v4
         with:
           name: twrp-pond-build
-          path: |
-            twrp/out/target/product/pond/*.img
-            twrp/out/target/product/pond/*.zip
+          path: artifacts/
           if-no-files-found: error
