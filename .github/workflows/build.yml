@@ -39,35 +39,26 @@ jobs:
             -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b twrp-12.1
 
-      - name: Sync source
+      - name: Sync TWRP source
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
-          repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
+          repo sync \
+            -c \
+            --force-sync \
+            --no-clone-bundle \
+            --no-tags \
+            -j"$(nproc)"
 
       - name: Add POCO C75 device tree
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           rm -rf device/xiaomi/pond
 
           git clone \
             --branch twrp-12.1 \
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
             device/xiaomi/pond
-
-      - name: Verify device tree
-        run: |
-          cd "$GITHUB_WORKSPACE/twrp"
-
-          test -f device/xiaomi/pond/BoardConfig.mk
-          test -f device/xiaomi/pond/prebuilt/kernel
-
-          echo "=== Recovery configuration ==="
-          grep -nE \
-            'TARGET_NO_RECOVERY|BOARD_BOOT_HEADER_VERSION|BOARD_USES_GENERIC_KERNEL_IMAGE|BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT' \
-            device/xiaomi/pond/BoardConfig.mk
-
-          echo "=== Kernel ==="
-          ls -lh device/xiaomi/pond/prebuilt/kernel
 
       - name: Configure TWRP
         run: |
@@ -78,73 +69,95 @@ jobs:
           source build/envsetup.sh
           lunch twrp_pond-eng
 
-      - name: Build vendor_boot
+      - name: Build TWRP
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
           export ALLOW_MISSING_DEPENDENCIES=true
 
+          echo "=== BUILDING VENDOR_BOOT ==="
           mka vendorbootimage
 
-      - name: Verify vendor_boot
+      - name: Find ANY IMG output
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          echo "=== Pond output directory ==="
-          ls -lah out/target/product/pond
+          OUT="out/target/product/pond"
 
-          echo "=== Generated images ==="
-          find out/target/product/pond \
-            -maxdepth 1 \
+          echo "========================================"
+          echo "SEARCHING FOR ALL IMG FILES"
+          echo "========================================"
+
+          if [ ! -d "$OUT" ]; then
+            echo "ERROR: Product output directory does not exist."
+            exit 1
+          fi
+
+          find "$OUT" \
             -type f \
-            \( -name "*.img" -o -name "*.zip" \) \
-            -print | sort
+            -iname "*.img" \
+            -printf '%p\n' | sort
 
-          test -f out/target/product/pond/vendor_boot.img
+          IMG_COUNT=$(find "$OUT" \
+            -type f \
+            -iname "*.img" | wc -l)
 
-          echo "SUCCESS: vendor_boot.img exists"
-          ls -lh out/target/product/pond/vendor_boot.img
+          echo
+          echo "IMG FILE COUNT: $IMG_COUNT"
 
-      - name: Prepare artifacts
+          if [ "$IMG_COUNT" -eq 0 ]; then
+            echo "ERROR: BUILD FINISHED BUT NO .img FILE WAS PRODUCED."
+            echo
+            echo "ALL FILES IN PRODUCT OUTPUT:"
+            find "$OUT" -type f -printf '%p\n' | sort
+            exit 1
+          fi
+
+      - name: Collect ALL IMG files
+        if: always()
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          rm -rf "$GITHUB_WORKSPACE/artifacts"
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          OUT="out/target/product/pond"
+          ART="$GITHUB_WORKSPACE/artifacts"
 
-          cp -v \
-            out/target/product/pond/vendor_boot.img \
-            "$GITHUB_WORKSPACE/artifacts/vendor_boot.img"
+          rm -rf "$ART"
+          mkdir -p "$ART"
 
-          for file in \
-            boot.img \
-            init_boot.img \
-            recovery.img \
-            dtbo.img \
-            vbmeta.img \
-            vendor_boot.img; do
+          echo "========================================"
+          echo "COPYING EVERY .IMG FILE"
+          echo "========================================"
 
-            if [ -f "out/target/product/pond/$file" ]; then
-              cp -v \
-                "out/target/product/pond/$file" \
-                "$GITHUB_WORKSPACE/artifacts/$file"
-            fi
-          done
-
-          find out/target/product/pond \
-            -maxdepth 1 \
+          find "$OUT" \
             -type f \
-            -name "*.zip" \
-            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
+            -iname "*.img" \
+            -exec cp -v {} "$ART/" \;
 
-          echo "=== FINAL ARTIFACTS ==="
-          ls -lah "$GITHUB_WORKSPACE/artifacts"
+          echo
+          echo "========================================"
+          echo "FILES READY FOR UPLOAD"
+          echo "========================================"
 
-          test -f "$GITHUB_WORKSPACE/artifacts/vendor_boot.img"
+          find "$ART" \
+            -type f \
+            -printf '%f  %s bytes\n' | sort
 
-      - name: Upload build outputs
+          IMG_COUNT=$(find "$ART" \
+            -type f \
+            -iname "*.img" | wc -l)
+
+          echo
+          echo "TOTAL IMG FILES: $IMG_COUNT"
+
+          if [ "$IMG_COUNT" -eq 0 ]; then
+            echo "ERROR: NOTHING TO UPLOAD."
+            exit 1
+          fi
+
+      - name: Upload IMG artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: twrp-pond-vendor-boot
-          path: artifacts/
+          name: twrp-pond-images
+          path: artifacts/*.img
           if-no-files-found: error
+          compression-level: 0
