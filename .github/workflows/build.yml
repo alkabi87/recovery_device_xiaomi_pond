@@ -1,0 +1,65 @@
+name: Build TWRP 12.1 - POCO C75
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 \
+            x11proto-core-dev libx11-dev libreadline-dev \
+            libgl1-mesa-dev xsltproc unzip fontconfig \
+            python3 python-is-python3
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo \
+            -o ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize TWRP source
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/twrp"
+          cd "$GITHUB_WORKSPACE/twrp"
+          repo init \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-12.1
+
+      - name: Sync source
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc)
+
+      - name: Add POCO C75 device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          rm -rf device/xiaomi/pond
+          git clone \
+            -b twrp-12.1 \
+            https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
+            device/xiaomi/pond
+
+      - name: Build TWRP
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          source build/envsetup.sh
+          lunch twrp_pond-eng
+          mka recoveryimage
+
+      - name: Upload recovery image
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-pond
+          path: |
+            twrp/out/target/product/pond/recovery.img
+            twrp/out/target/product/pond/*.zip
+          if-no-files-found: error
