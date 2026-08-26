@@ -1,10 +1,10 @@
 name: Build TWRP 12.1 - POCO C75
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - twrp-12.1
-  workflow_dispatch:
 
 jobs:
   build:
@@ -23,17 +23,15 @@ jobs:
 
       - name: Install repo
         run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo \
-            -o ~/bin/repo
-          chmod a+x ~/bin/repo
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Initialize TWRP source
         run: |
           mkdir -p "$GITHUB_WORKSPACE/twrp"
           cd "$GITHUB_WORKSPACE/twrp"
-
           repo init \
             -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b twrp-12.1
@@ -41,14 +39,12 @@ jobs:
       - name: Sync source
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
-          repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc)
+          repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
       - name: Add POCO C75 device tree
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
-
           rm -rf device/xiaomi/pond
-
           git clone \
             -b twrp-12.1 \
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
@@ -57,22 +53,30 @@ jobs:
       - name: Build TWRP
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
-
           source build/envsetup.sh
           lunch twrp_pond-eng
-          mka recoveryimage
+          mka recoveryimage -j"$(nproc)"
 
-      - name: Find build outputs
+      - name: Verify build output
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          echo "=== POCO C75 build outputs ==="
+          echo "=== POCO C75 PRODUCT DIRECTORY ==="
+          ls -lah out/target/product/pond || true
 
-          find out/target/product/pond \
-            -maxdepth 2 \
-            -type f \
-            \( -name "*.img" -o -name "*.zip" \) \
-            -print
+          echo "=== ALL IMG/ZIP FILES UNDER OUT ==="
+          find out -type f \( -name "*.img" -o -name "*.zip" \) -print | sort
+
+          echo "=== REQUIRED RECOVERY IMAGE ==="
+          if [ -f "out/target/product/pond/recovery.img" ]; then
+            ls -lh "out/target/product/pond/recovery.img"
+            file "out/target/product/pond/recovery.img"
+          else
+            echo "ERROR: out/target/product/pond/recovery.img was not produced."
+            echo "=== RECOVERY-NAMED FILES ==="
+            find out -type f -iname "*recovery*" -print | sort || true
+            exit 1
+          fi
 
       - name: Prepare artifacts
         run: |
@@ -81,25 +85,20 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/artifacts"
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
-          echo "=== Product output ==="
-          ls -lah out/target/product/pond/ || true
+          cp -v "out/target/product/pond/recovery.img" \
+            "$GITHUB_WORKSPACE/artifacts/recovery.img"
 
-          echo "=== Searching for recovery/image/zip files ==="
+          for f in \
+            "out/target/product/pond/boot.img" \
+            "out/target/product/pond/vendor_boot.img" \
+            "out/target/product/pond/dtbo.img"; do
+            if [ -f "$f" ]; then
+              cp -v "$f" "$GITHUB_WORKSPACE/artifacts/"
+            fi
+          done
 
-          find out/target/product/pond \
-            -type f \
-            \( -name "recovery.img" -o -name "*.img" -o -name "*.zip" \) \
-            -print
-
-          find out/target/product/pond \
-            -type f \
-            \( -name "recovery.img" -o -name "*.img" -o -name "*.zip" \) \
-            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
-
-          echo "=== Files prepared for upload ==="
+          echo "=== ARTIFACTS ==="
           ls -lah "$GITHUB_WORKSPACE/artifacts"
-
-          test -n "$(find "$GITHUB_WORKSPACE/artifacts" -type f -print -quit)"
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v4
