@@ -55,11 +55,19 @@ jobs:
           lunch twrp_pond-eng
           mka recoveryimage
 
-      - name: Upload recovery image
+            - name: Find build outputs
+        run: |
+          echo "=== POCO C75 build outputs ==="
+          find "$GITHUB_WORKSPACE/twrp/out/target/product/pond" \
+            -maxdepth 2 -type f -printf '%p\n' | sort
+
+            
+
+      - name: Upload build outputs
         uses: actions/upload-artifact@v4
         with:
-          name: twrp-pond
+          name: twrp-pond-build
           path: |
-            twrp/out/target/product/pond/recovery.img
+            twrp/out/target/product/pond/*.img
             twrp/out/target/product/pond/*.zip
           if-no-files-found: error
