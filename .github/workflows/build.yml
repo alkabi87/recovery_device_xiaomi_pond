@@ -55,7 +55,7 @@ jobs:
           lunch twrp_pond-eng
           mka recoveryimage
 
-            - name: Find build outputs
+        - name: Find build outputs
         run: |
           echo "=== POCO C75 build outputs ==="
           find "$GITHUB_WORKSPACE/twrp/out/target/product/pond" \
