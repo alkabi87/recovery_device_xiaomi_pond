@@ -2,9 +2,6 @@ name: Build TWRP 12.1 - POCO C75
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - twrp-12.1
 
 jobs:
   build:
@@ -16,23 +13,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git-core gnupg flex bison build-essential \
-            zip curl unzip xsltproc fontconfig \
-            zlib1g-dev libc6-dev-i386 \
-            libncurses5 libncurses5-dev \
-            x11proto-core-dev libx11-dev \
-            libreadline-dev libgl1-mesa-dev \
+            git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 \
+            x11proto-core-dev libx11-dev libreadline-dev \
+            libgl1-mesa-dev xsltproc unzip fontconfig \
             python3 python-is-python3
 
       - name: Install repo
         run: |
-          mkdir -p "$HOME/bin"
-
-          curl -fsSL \
-            https://storage.googleapis.com/git-repo-downloads/repo \
-            -o "$HOME/bin/repo"
-
-          chmod +x "$HOME/bin/repo"
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo \
+            -o ~/bin/repo
+          chmod a+x ~/bin/repo
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Initialize TWRP source
@@ -48,9 +40,7 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          repo sync \
-            -c \
-            --force-sync \
+          repo sync -c --force-sync \
             --no-clone-bundle \
             --no-tags \
             -j"$(nproc)"
@@ -62,7 +52,7 @@ jobs:
           rm -rf device/xiaomi/pond
 
           git clone \
-            --branch twrp-12.1 \
+            -b twrp-12.1 \
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
             device/xiaomi/pond
 
@@ -70,102 +60,87 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          export ALLOW_MISSING_DEPENDENCIES=true
-
           source build/envsetup.sh
-          lunch twrp_pond-eng
 
-          echo "=== BUILD ENVIRONMENT READY ==="
-          type mka || true
-          type make || true
+          lunch twrp_pond-eng
 
       - name: Build TWRP vendor_boot
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
-          export ALLOW_MISSING_DEPENDENCIES=true
+          echo "========================================"
+          echo "       BUILDING VENDOR_BOOT"
+          echo "========================================"
 
-          source build/envsetup.sh
-          lunch twrp_pond-eng
-
-          echo "=== STARTING VENDOR_BOOT BUILD ==="
-
-          if type mka >/dev/null 2>&1; then
-            mka vendorbootimage -j"$(nproc)"
-          else
-            echo "mka unavailable, using build/soong/soong_ui.bash"
-
-            build/soong/soong_ui.bash \
-              --make-mode \
-              vendorbootimage \
-              -j"$(nproc)"
-          fi
+          mka vendorbootimage
 
       - name: Inspect build output
-        if: always()
+        if: success()
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
           echo "========================================"
-          echo "PRODUCT OUTPUT"
+          echo "          BUILD OUTPUT"
           echo "========================================"
 
-          OUT="out/target/product/pond"
+          echo "Searching entire out directory for IMG files..."
 
-          if [ -d "$OUT" ]; then
-            find "$OUT" \
-              -type f \
-              -printf '%P\t%s bytes\n' \
-              | sort
-          else
-            echo "NO PRODUCT OUTPUT DIRECTORY"
-          fi
-
-          echo
-          echo "========================================"
-          echo "ALL IMG FILES"
-          echo "========================================"
-
-          if [ -d out ]; then
-            find out \
-              -type f \
-              -iname "*.img" \
-              -printf '%p\t%s bytes\n' \
-              | sort
-          fi
-
-      - name: Collect every build output
-        if: always()
-        run: |
-          cd "$GITHUB_WORKSPACE/twrp"
-
-          OUT="$GITHUB_WORKSPACE/twrp/out/target/product/pond"
-          ART="$GITHUB_WORKSPACE/artifacts"
-
-          rm -rf "$ART"
-          mkdir -p "$ART"
-
-          if [ -d "$OUT" ]; then
-            cp -a "$OUT/." "$ART/"
-          else
-            echo "Product output directory does not exist."
-          fi
-
-          echo "========================================"
-          echo "FILES TO UPLOAD"
-          echo "========================================"
-
-          find "$ART" \
+          find out \
             -type f \
-            -printf '%P\t%s bytes\n' \
+            -name "*.img" \
+            -print \
             | sort
 
-      - name: Upload all build outputs
-        if: always()
+      - name: Collect IMG outputs
+        if: success()
+        run: |
+          set -e
+
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          echo "========================================"
+          echo "       COLLECTING ALL IMG FILES"
+          echo "========================================"
+
+          rm -rf "$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          find out \
+            -type f \
+            -name "*.img" \
+            -exec cp -L {} "$GITHUB_WORKSPACE/artifacts/" \;
+
+          echo "========================================"
+          echo "       FINAL ARTIFACTS"
+          echo "========================================"
+
+          ls -lah "$GITHUB_WORKSPACE/artifacts"
+
+          count=$(find "$GITHUB_WORKSPACE/artifacts" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.img" \
+            | wc -l)
+
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: NO IMG FILES WERE PRODUCED"
+            exit 1
+          fi
+
+          echo "Found $count IMG file(s)."
+
+      - name: Upload IMG outputs
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: twrp-pond-complete-output
-          path: artifacts/
-          if-no-files-found: warn
-          include-hidden-files: true
+          name: twrp-poco-c75-img
+          path: artifacts/*.img
+          if-no-files-found: error
           compression-level: 0
+
+      - name: Complete job
+        if: always()
+        run: |
+          echo "========================================"
+          echo "             WORKFLOW DONE"
+          echo "========================================"
