@@ -33,6 +33,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/twrp"
           cd "$GITHUB_WORKSPACE/twrp"
+
           repo init \
             -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
             -b twrp-12.1
@@ -45,7 +46,9 @@ jobs:
       - name: Add POCO C75 device tree
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           rm -rf device/xiaomi/pond
+
           git clone \
             -b twrp-12.1 \
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
@@ -54,6 +57,7 @@ jobs:
       - name: Build TWRP
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           source build/envsetup.sh
           lunch twrp_pond-eng
           mka recoveryimage
@@ -61,20 +65,36 @@ jobs:
       - name: Find build outputs
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           echo "=== POCO C75 build outputs ==="
+
           find out/target/product/pond \
-            -type f \( -name "*.img" -o -name "*.zip" \) \
+            -maxdepth 2 \
+            -type f \
+            \( -name "*.img" -o -name "*.zip" \) \
             -print
 
       - name: Prepare artifacts
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           rm -rf "$GITHUB_WORKSPACE/artifacts"
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
+          echo "=== Product output ==="
+          ls -lah out/target/product/pond/ || true
+
+          echo "=== Searching for recovery/image/zip files ==="
+
           find out/target/product/pond \
-            -type f \( -name "*.img" -o -name "*.zip" \) \
-            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+            -type f \
+            \( -name "recovery.img" -o -name "*.img" -o -name "*.zip" \) \
+            -print
+
+          find out/target/product/pond \
+            -type f \
+            \( -name "recovery.img" -o -name "*.img" -o -name "*.zip" \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
 
           echo "=== Files prepared for upload ==="
           ls -lah "$GITHUB_WORKSPACE/artifacts"
