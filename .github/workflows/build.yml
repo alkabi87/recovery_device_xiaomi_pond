@@ -1,72 +1,150 @@
-name: Build TWRP 12.1 - POCO C75 (pond)
+name: Build TWRP 12.1 - POCO C75
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - twrp-12.1
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Workflow Code
-      uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 \
+            x11proto-core-dev libx11-dev libreadline-dev \
+            libgl1-mesa-dev xsltproc unzip fontconfig \
+            python3 python-is-python3
 
-    - name: Clean Environment and Setup Swap Space
-      run: |
-        sudo swapoff -a || true
-        sudo rm -f /swapfile
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
-        sudo fallocate -l 12G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
+      - name: Install repo
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf lib32ncurses5-dev lib32z1-dev libmpath-0-dev libgl1-mesa-dev libxml2-utils xsltproc zip zlib1g-dev python3 openjdk-11-jdk
+      - name: Initialize TWRP source
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/twrp"
+          cd "$GITHUB_WORKSPACE/twrp"
 
-    - name: Install Repo Tool
-      run: |
-        mkdir -p ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        echo "$HOME/bin" >> $GITHUB_PATH
+          repo init \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-12.1
 
-    - name: Initialize TWRP 12.1 Source
-      run: |
-        mkdir twrp
-        cd twrp
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
+      - name: Sync source
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-    - name: Sync Source Code
-      run: |
-        cd twrp
-        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+      - name: Add POCO C75 device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          rm -rf device/xiaomi/pond
 
-    - name: Clone POCO C75 Device Tree
-      run: |
-        cd twrp
-        git clone https://github.com/Mayuri-Chan/recovery_device_xiaomi_pond.git -b android-12.1 device/xiaomi/pond
+          git clone \
+            --branch twrp-12.1 \
+            https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
+            device/xiaomi/pond
 
-    - name: Build TWRP (Vendor Boot / Boot Image)
-      run: |
-        cd twrp
-        source build/envsetup.sh
-        lunch twrp_pond-eng || lunch omni_pond-eng
-        make clean
-        make vendorbootimage -j$(nproc --all) || make bootimage -j$(nproc --all) || make recoveryimage -j$(nproc --all)
+      - name: Verify device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
 
-    - name: Package Output Artifacts
-      run: |
-        cd twrp
-        mkdir -p artifact
-        find out/target/product/pond/ -maxdepth 1 -type f \( -name "*.img" -o -name "*.zip" \) -exec cp {} artifact/ \;
+          test -f device/xiaomi/pond/BoardConfig.mk
+          test -f device/xiaomi/pond/prebuilt/kernel
 
-    - name: Upload TWRP Build Output
-      uses: actions/upload-artifact@v4
-      with:
-        name: TWRP-POCO-C75-pond
-        path: twrp/artifact/*
+          echo "=== Recovery configuration ==="
+          grep -nE \
+            'TARGET_NO_RECOVERY|BOARD_BOOT_HEADER_VERSION|BOARD_USES_GENERIC_KERNEL_IMAGE|BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT' \
+            device/xiaomi/pond/BoardConfig.mk
+
+          echo "=== Kernel ==="
+          ls -lh device/xiaomi/pond/prebuilt/kernel
+
+      - name: Configure TWRP
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+          lunch twrp_pond-eng
+
+      - name: Build vendor_boot
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          mka vendorbootimage
+
+      - name: Verify vendor_boot
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          echo "=== Pond output directory ==="
+          ls -lah out/target/product/pond
+
+          echo "=== Generated images ==="
+          find out/target/product/pond \
+            -maxdepth 1 \
+            -type f \
+            \( -name "*.img" -o -name "*.zip" \) \
+            -print | sort
+
+          test -f out/target/product/pond/vendor_boot.img
+
+          echo "SUCCESS: vendor_boot.img exists"
+          ls -lh out/target/product/pond/vendor_boot.img
+
+      - name: Prepare artifacts
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          rm -rf "$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          cp -v \
+            out/target/product/pond/vendor_boot.img \
+            "$GITHUB_WORKSPACE/artifacts/vendor_boot.img"
+
+          for file in \
+            boot.img \
+            init_boot.img \
+            recovery.img \
+            dtbo.img \
+            vbmeta.img \
+            vendor_boot.img; do
+
+            if [ -f "out/target/product/pond/$file" ]; then
+              cp -v \
+                "out/target/product/pond/$file" \
+                "$GITHUB_WORKSPACE/artifacts/$file"
+            fi
+          done
+
+          find out/target/product/pond \
+            -maxdepth 1 \
+            -type f \
+            -name "*.zip" \
+            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
+
+          echo "=== FINAL ARTIFACTS ==="
+          ls -lah "$GITHUB_WORKSPACE/artifacts"
+
+          test -f "$GITHUB_WORKSPACE/artifacts/vendor_boot.img"
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-pond-vendor-boot
+          path: artifacts/
+          if-no-files-found: error
