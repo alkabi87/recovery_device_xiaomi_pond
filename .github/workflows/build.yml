@@ -11,25 +11,55 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
-            git-core gnupg flex bison build-essential zip curl \
-            zlib1g-dev libc6-dev-i386 libncurses5 \
-            x11proto-core-dev libx11-dev libreadline-dev \
-            libgl1-mesa-dev xsltproc unzip fontconfig \
-            python3 python-is-python3
+            git \
+            git-core \
+            gnupg \
+            flex \
+            bison \
+            build-essential \
+            zip \
+            curl \
+            zlib1g-dev \
+            libc6-dev-i386 \
+            libncurses5 \
+            libncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            libreadline-dev \
+            libgl1-mesa-dev \
+            xsltproc \
+            unzip \
+            fontconfig \
+            python3 \
+            python-is-python3
 
       - name: Install repo
         run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo \
-            -o ~/bin/repo
-          chmod a+x ~/bin/repo
+          set -e
+
+          mkdir -p "$HOME/bin"
+
+          curl -L \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+
+          chmod +x "$HOME/bin/repo"
+
           echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          "$HOME/bin/repo" --version
 
       - name: Initialize TWRP source
         run: |
+          set -e
+
           mkdir -p "$GITHUB_WORKSPACE/twrp"
+
           cd "$GITHUB_WORKSPACE/twrp"
 
           repo init \
@@ -38,60 +68,71 @@ jobs:
 
       - name: Sync TWRP source
         run: |
+          set -e
+
           cd "$GITHUB_WORKSPACE/twrp"
 
-          repo sync -c --force-sync \
+          repo sync \
+            -c \
+            --force-sync \
             --no-clone-bundle \
             --no-tags \
             -j"$(nproc)"
 
       - name: Add POCO C75 device tree
         run: |
+          set -e
+
           cd "$GITHUB_WORKSPACE/twrp"
 
           rm -rf device/xiaomi/pond
 
           git clone \
+            --depth=1 \
             -b twrp-12.1 \
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
             device/xiaomi/pond
 
-      - name: Configure Android build
+          test -f device/xiaomi/pond/BoardConfig.mk
+          test -f device/xiaomi/pond/twrp_pond.mk
+
+          echo "Device tree OK"
+
+      - name: Build TWRP vendor_boot
         run: |
+          set -e
+          set -o pipefail
+
           cd "$GITHUB_WORKSPACE/twrp"
+
+          echo "========================================"
+          echo " INITIALIZING TWRP BUILD ENVIRONMENT"
+          echo "========================================"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
 
           source build/envsetup.sh
 
           lunch twrp_pond-eng
 
-      - name: Build TWRP vendor_boot
-        run: |
-          cd "$GITHUB_WORKSPACE/twrp"
+          echo "========================================"
+          echo " CHECKING MKA"
+          echo "========================================"
+
+          command -v mka
+          type mka
 
           echo "========================================"
-          echo "       BUILDING VENDOR_BOOT"
+          echo " BUILDING VENDOR_BOOT"
           echo "========================================"
 
           mka vendorbootimage
 
-      - name: Inspect build output
-        if: success()
-        run: |
-          cd "$GITHUB_WORKSPACE/twrp"
-
           echo "========================================"
-          echo "          BUILD OUTPUT"
+          echo " BUILD FINISHED"
           echo "========================================"
 
-          echo "Searching entire out directory for IMG files..."
-
-          find out \
-            -type f \
-            -name "*.img" \
-            -print \
-            | sort
-
-      - name: Collect IMG outputs
+      - name: Find all IMG files
         if: success()
         run: |
           set -e
@@ -99,48 +140,81 @@ jobs:
           cd "$GITHUB_WORKSPACE/twrp"
 
           echo "========================================"
-          echo "       COLLECTING ALL IMG FILES"
+          echo " ALL IMG FILES"
           echo "========================================"
-
-          rm -rf "$GITHUB_WORKSPACE/artifacts"
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
           find out \
             -type f \
             -name "*.img" \
-            -exec cp -L {} "$GITHUB_WORKSPACE/artifacts/" \;
+            -print \
+            | sort
 
-          echo "========================================"
-          echo "       FINAL ARTIFACTS"
-          echo "========================================"
+      - name: Collect IMG files
+        if: success()
+        run: |
+          set -e
 
-          ls -lah "$GITHUB_WORKSPACE/artifacts"
+          cd "$GITHUB_WORKSPACE/twrp"
 
-          count=$(find "$GITHUB_WORKSPACE/artifacts" \
-            -maxdepth 1 \
-            -type f \
-            -name "*.img" \
-            | wc -l)
+          rm -rf "$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          count=0
+
+          while IFS= read -r -d '' file; do
+            filename="$(basename "$file")"
+
+            echo "Copying:"
+            echo "$file"
+
+            cp -L "$file" \
+              "$GITHUB_WORKSPACE/artifacts/$filename"
+
+            count=$((count + 1))
+          done < <(
+            find out \
+              -type f \
+              -name "*.img" \
+              -print0
+          )
+
+          echo "IMG count: $count"
 
           if [ "$count" -eq 0 ]; then
-            echo "ERROR: NO IMG FILES WERE PRODUCED"
+            echo "ERROR: No IMG files were produced."
             exit 1
           fi
 
-          echo "Found $count IMG file(s)."
+          echo "========================================"
+          echo " ARTIFACTS"
+          echo "========================================"
 
-      - name: Upload IMG outputs
+          find "$GITHUB_WORKSPACE/artifacts" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.img" \
+            -exec ls -lh {} \;
+
+      - name: Upload IMG files
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: twrp-poco-c75-img
+          name: twrp-poco-c75-images
           path: artifacts/*.img
           if-no-files-found: error
           compression-level: 0
 
-      - name: Complete job
+      - name: Summary
         if: always()
         run: |
           echo "========================================"
-          echo "             WORKFLOW DONE"
+          echo " BUILD SUMMARY"
           echo "========================================"
+
+          if [ -d "$GITHUB_WORKSPACE/artifacts" ]; then
+            find "$GITHUB_WORKSPACE/artifacts" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.img" \
+              -exec ls -lh {} \; || true
+          fi
