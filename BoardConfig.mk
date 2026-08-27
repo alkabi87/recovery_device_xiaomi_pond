@@ -116,7 +116,10 @@ TARGET_NO_RECOVERY := true
 BOARD_USES_GENERIC_KERNEL_IMAGE := true
 BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE :=
 BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true
-BOARD_MOVE_GSI_AVB_KEYS_TO_VENDOR_BOOT :=
+# Android 12+ vendor_boot v4: keep recovery resources in a dedicated recovery ramdisk fragment.
+# This makes the ramdisk table mark the fragment as VENDOR_RAMDISK_TYPE_RECOVERY.
+BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := true
+BOARD_MOVE_GSI_AVB_KEYS_TO_VENDOR_BOOT := true
 
 # Crypto
 TW_INCLUDE_CRYPTO := true
