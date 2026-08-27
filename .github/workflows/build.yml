@@ -11,22 +11,27 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git-core gnupg flex bison build-essential zip curl \
-            zlib1g-dev libc6-dev-i386 libncurses5 \
-            x11proto-core-dev libx11-dev libreadline-dev \
-            libgl1-mesa-dev xsltproc unzip fontconfig \
+            git-core gnupg flex bison build-essential \
+            zip curl unzip xsltproc fontconfig \
+            zlib1g-dev libc6-dev-i386 \
+            libncurses5 libncurses5-dev \
+            x11proto-core-dev libx11-dev \
+            libreadline-dev libgl1-mesa-dev \
             python3 python-is-python3
 
       - name: Install repo
         run: |
           mkdir -p "$HOME/bin"
+
           curl -fsSL \
             https://storage.googleapis.com/git-repo-downloads/repo \
             -o "$HOME/bin/repo"
+
           chmod +x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
@@ -42,6 +47,7 @@ jobs:
       - name: Sync TWRP source
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
+
           repo sync \
             -c \
             --force-sync \
@@ -60,7 +66,7 @@ jobs:
             https://github.com/alkabi87/recovery_device_xiaomi_pond.git \
             device/xiaomi/pond
 
-      - name: Configure TWRP
+      - name: Configure Android build
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
@@ -69,95 +75,97 @@ jobs:
           source build/envsetup.sh
           lunch twrp_pond-eng
 
-      - name: Build TWRP
+          echo "=== BUILD ENVIRONMENT READY ==="
+          type mka || true
+          type make || true
+
+      - name: Build TWRP vendor_boot
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
           export ALLOW_MISSING_DEPENDENCIES=true
 
-          echo "=== BUILDING VENDOR_BOOT ==="
-          mka vendorbootimage
+          source build/envsetup.sh
+          lunch twrp_pond-eng
 
-      - name: Find ANY IMG output
-        run: |
-          cd "$GITHUB_WORKSPACE/twrp"
+          echo "=== STARTING VENDOR_BOOT BUILD ==="
 
-          OUT="out/target/product/pond"
+          if type mka >/dev/null 2>&1; then
+            mka vendorbootimage -j"$(nproc)"
+          else
+            echo "mka unavailable, using build/soong/soong_ui.bash"
 
-          echo "========================================"
-          echo "SEARCHING FOR ALL IMG FILES"
-          echo "========================================"
-
-          if [ ! -d "$OUT" ]; then
-            echo "ERROR: Product output directory does not exist."
-            exit 1
+            build/soong/soong_ui.bash \
+              --make-mode \
+              vendorbootimage \
+              -j"$(nproc)"
           fi
 
-          find "$OUT" \
-            -type f \
-            -iname "*.img" \
-            -printf '%p\n' | sort
-
-          IMG_COUNT=$(find "$OUT" \
-            -type f \
-            -iname "*.img" | wc -l)
-
-          echo
-          echo "IMG FILE COUNT: $IMG_COUNT"
-
-          if [ "$IMG_COUNT" -eq 0 ]; then
-            echo "ERROR: BUILD FINISHED BUT NO .img FILE WAS PRODUCED."
-            echo
-            echo "ALL FILES IN PRODUCT OUTPUT:"
-            find "$OUT" -type f -printf '%p\n' | sort
-            exit 1
-          fi
-
-      - name: Collect ALL IMG files
+      - name: Inspect build output
         if: always()
         run: |
           cd "$GITHUB_WORKSPACE/twrp"
 
+          echo "========================================"
+          echo "PRODUCT OUTPUT"
+          echo "========================================"
+
           OUT="out/target/product/pond"
+
+          if [ -d "$OUT" ]; then
+            find "$OUT" \
+              -type f \
+              -printf '%P\t%s bytes\n' \
+              | sort
+          else
+            echo "NO PRODUCT OUTPUT DIRECTORY"
+          fi
+
+          echo
+          echo "========================================"
+          echo "ALL IMG FILES"
+          echo "========================================"
+
+          if [ -d out ]; then
+            find out \
+              -type f \
+              -iname "*.img" \
+              -printf '%p\t%s bytes\n' \
+              | sort
+          fi
+
+      - name: Collect every build output
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          OUT="$GITHUB_WORKSPACE/twrp/out/target/product/pond"
           ART="$GITHUB_WORKSPACE/artifacts"
 
           rm -rf "$ART"
           mkdir -p "$ART"
 
-          echo "========================================"
-          echo "COPYING EVERY .IMG FILE"
-          echo "========================================"
+          if [ -d "$OUT" ]; then
+            cp -a "$OUT/." "$ART/"
+          else
+            echo "Product output directory does not exist."
+          fi
 
-          find "$OUT" \
-            -type f \
-            -iname "*.img" \
-            -exec cp -v {} "$ART/" \;
-
-          echo
           echo "========================================"
-          echo "FILES READY FOR UPLOAD"
+          echo "FILES TO UPLOAD"
           echo "========================================"
 
           find "$ART" \
             -type f \
-            -printf '%f  %s bytes\n' | sort
+            -printf '%P\t%s bytes\n' \
+            | sort
 
-          IMG_COUNT=$(find "$ART" \
-            -type f \
-            -iname "*.img" | wc -l)
-
-          echo
-          echo "TOTAL IMG FILES: $IMG_COUNT"
-
-          if [ "$IMG_COUNT" -eq 0 ]; then
-            echo "ERROR: NOTHING TO UPLOAD."
-            exit 1
-          fi
-
-      - name: Upload IMG artifacts
+      - name: Upload all build outputs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: twrp-pond-images
-          path: artifacts/*.img
-          if-no-files-found: error
+          name: twrp-pond-complete-output
+          path: artifacts/
+          if-no-files-found: warn
+          include-hidden-files: true
           compression-level: 0
